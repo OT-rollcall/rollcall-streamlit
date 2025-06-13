@@ -9,8 +9,8 @@ uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", 
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name="Sorted", engine="openpyxl")
-        st.success("✅ File uploaded and 'Sorted' worksheet loaded successfully.")
+        df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        st.success("✅ File uploaded and 'sorted' worksheet loaded successfully.")
         st.dataframe(df)
 
         st.markdown("---")
