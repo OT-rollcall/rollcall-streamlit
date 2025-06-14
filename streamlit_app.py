@@ -19,7 +19,7 @@ if uploaded_file:
         receive_help = {}
 
         # Extract columns dynamically
-        name_col = "OT's Name"
+        name_col = "Name"
         help_col = "Can help"
         need_col = "Need help"
         total_col = "Total cases"
