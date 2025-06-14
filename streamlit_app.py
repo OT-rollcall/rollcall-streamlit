@@ -44,4 +44,60 @@ if uploaded_file:
         # Total case count
         df["Total Cases"] = df["P1 Total"] + df["P2 Total"] + df["P3 Total"]
 
-        # Separate hel
+        # Separate helpers and those needing help
+        helpers = df[(df["Present"].str.lower() == "yes") & (df["Can Help"] > 0)].copy()
+        needs_help = df[(df["Need Help"] > 0) | (df["Present"].str.lower() == "no")].copy()
+
+        st.success("✅ File loaded. Case redistribution will now be displayed.")
+        st.dataframe(df)
+
+        # Case assignment logic
+        assignment_log = []
+
+        # Calculate total cases needing reassignment
+        total_cases_to_assign = needs_help["Total Cases"].sum()
+
+        for _, helper in helpers.iterrows():
+            max_assignable = min(helper["Can Help"], 9 - helper["Total Cases"])
+            if max_assignable <= 0:
+                continue
+
+            assigned = 0
+
+            for i, (idx, needy) in enumerate(needs_help.iterrows()):
+                if needy["Total Cases"] <= 0:
+                    continue
+
+                assign_count = min(max_assignable - assigned, needy["Total Cases"])
+                if assign_count <= 0:
+                    break
+
+                needs_help.at[idx, "Total Cases"] -= assign_count
+                assigned += assign_count
+
+                assignment_log.append(
+                    f"🔄 {helper['Name']} helps {needy['Name']} with {assign_count} case(s)"
+                )
+
+            if assigned > 0:
+                st.write(f"✅ {helper['Name']} assigned {assigned} case(s) to assist others.")
+
+        unassigned = needs_help[needs_help["Total Cases"] > 0]
+        if not assignment_log:
+            st.info("No case redistribution was needed.")
+        else:
+            st.markdown("### 🔍 Case Redistribution Summary")
+            for line in assignment_log:
+                st.markdown(f"- {line}")
+
+        if not unassigned.empty:
+            st.warning("⚠️ Some cases could not be reassigned due to helper limits:")
+            st.dataframe(unassigned[["Name", "Total Cases"]])
+        else:
+            st.success("🎉 All help requests and absentee caseloads have been assigned!")
+
+    except Exception as e:
+        st.error(f"❌ Error reading file: {e}")
+
+else:
+    st.info("Please upload your Excel file to begin.")
