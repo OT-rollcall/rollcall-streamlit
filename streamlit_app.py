@@ -1,119 +1,86 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Roll Call App", layout="wide")
-st.title("🏥 Roll Call Assistant (Prototype)")
+st.set_page_config(page_title="Roll Call Assistant", layout="wide")
+st.title("Roll Call Assistant (Prototype with Assignment Logic)")
 
-# --- Upload Excel File ---
-uploaded_file = st.file_uploader("📤 Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("📁 Upload today's Excel file (worksheet = 'sorted')", type=["xlsx"])
 
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
-        st.success("✅ File uploaded and 'sorted' worksheet loaded successfully.")
+
+        st.success("✅ File uploaded successfully!")
         st.dataframe(df)
 
-        # --- Extract relevant data ---
-        therapist_avail = {}
-        give_help = {}
-        receive_help = {}
+        # Extract relevant fields
+        name_col = "OT's Name"
+        present_col = "Present / Absent "
+        ms_col = "Must See / P1 (Total)"
+        can_help_col = "Can Help (indicate number of cases/timings under \"Others\")"
+        need_help_col = "Need Help (indicate number of cases under \"Others\")"
+        ward_col = "Ward"
 
-        # Extract columns dynamically
-        name_col = "Name"
-        help_col = "Can help"
-        need_col = "Need help"
-        total_col = "Total cases"
-        ms_col = "MS"
-        p21_col = "P2.1"
-        p22_col = "P2.2"
-        p3_col = "P3"
+        df = df[df[present_col].str.lower() == 'yes'].copy()
+        df[name_col] = df[name_col].fillna("Unknown")
 
-        for _, row in df.iterrows():
-            name = row[name_col]
-            therapist_avail[name] = {
-                "max_cases": 9,
-                "assigned": 0,
-                "details": {
-                    "MS": 0,
-                    "P2.1": 0,
-                    "P2.2": 0,
-                    "P3": 0,
-                },
-                "ward_locs": [],
-                "committed": False
-            }
+        # Clean and convert numbers
+        df[ms_col] = pd.to_numeric(df[ms_col], errors='coerce').fillna(0).astype(int)
+        df[can_help_col] = pd.to_numeric(df[can_help_col], errors='coerce').fillna(0).astype(int)
+        df[need_help_col] = pd.to_numeric(df[need_help_col], errors='coerce').fillna(0).astype(int)
 
-            if pd.notna(row[help_col]):
-                try:
-                    give_help[name] = int(row[help_col])
-                except:
-                    pass
+        # Calculate total initial caseload
+        df['Total Load'] = df[ms_col]
 
-            if pd.notna(row[need_col]):
-                try:
-                    receive_help[name] = int(row[need_col])
-                except:
-                    pass
+        # --- Rule: Distribute help fairly (max 9 cases) ---
+        assignments = []
 
-        # --- Assign cases by priority ---
-        cases = []
+        for idx, row in df.iterrows():
+            therapist = row[name_col]
+            can_give = row[need_help_col]
+            can_take = row[can_help_col]
+            total_load = row['Total Load']
+            ward = row[ward_col]
 
-        for _, row in df.iterrows():
-            name = row[name_col]
-            for case_type in ["MS", "P2.1", "P2.2", "P3"]:
-                try:
-                    count = int(row[case_type])
-                    for _ in range(count):
-                        cases.append({"therapist": name, "type": case_type})
-                except:
-                    continue
+            if can_give > 0:
+                # Find helpers in same ward first
+                helpers = df[
+                    (df[name_col] != therapist) &
+                    (df[can_help_col] > 0) &
+                    (df['Total Load'] < 9)
+                ].copy()
 
-        # Sort by priority
-        priority_order = {"MS": 1, "P2.1": 2, "P2.2": 3, "P3": 4}
-        cases.sort(key=lambda x: priority_order[x["type"]])
+                # Sort helpers by same ward > lowest load
+                helpers['same_ward'] = helpers[ward_col] == ward
+                helpers = helpers.sort_values(by=['same_ward', 'Total Load'], ascending=[False, True])
 
-        # Distribute cases
-        assignment_log = []
+                to_assign = can_give
+                for _, helper_row in helpers.iterrows():
+                    helper = helper_row[name_col]
+                    helper_load = helper_row['Total Load']
+                    helper_capacity = min(9 - helper_load, helper_row[can_help_col], to_assign)
 
-        for case in cases:
-            giver = case["therapist"]
-            ctype = case["type"]
+                    if helper_capacity > 0:
+                        assignments.append(f"➡️ **{helper}** helps **{therapist}** with **{helper_capacity} case(s)**")
+                        df.loc[df[name_col] == helper, 'Total Load'] += helper_capacity
+                        df.loc[df[name_col] == helper, can_help_col] -= helper_capacity
+                        to_assign -= helper_capacity
 
-            # Try to reassign if giver is overloaded or requested help
-            assigned = False
+                        if to_assign <= 0:
+                            break
 
-            if receive_help.get(giver, 0) > 0:
-                for receiver, can_take in give_help.items():
-                    if therapist_avail[receiver]["assigned"] < therapist_avail[receiver]["max_cases"] and can_take > 0:
-                        therapist_avail[receiver]["assigned"] += 1
-                        therapist_avail[receiver]["details"][ctype] += 1
-                        give_help[receiver] -= 1
-                        receive_help[giver] -= 1
-                        assignment_log.append(f"🟢 {receiver} helps {giver} with 1 {ctype}")
-                        assigned = True
-                        break
-
-            if not assigned:
-                therapist_avail[giver]["assigned"] += 1
-                therapist_avail[giver]["details"][ctype] += 1
-
-        # --- Display result summary ---
         st.markdown("---")
-        st.subheader("📋 Assignment Summary")
-
-        if assignment_log:
-            for line in assignment_log:
-                st.markdown(f"- {line}")
+        st.subheader("📊 Summary: Help Distribution")
+        if assignments:
+            for line in assignments:
+                st.markdown(line)
         else:
-            st.info("No cross-therapist help needed today.")
+            st.info("No case redistribution needed today.")
 
-        # Optional: display caseloads
-        with st.expander("📊 View individual caseloads"):
-            for name, info in therapist_avail.items():
-                st.markdown(f"**{name}** – Total: {info['assigned']} cases")
-                st.write(info["details"])
+        st.markdown("---")
+        st.caption("Prototype last updated: June 2025")
 
     except Exception as e:
-        st.error(f"⚠️ Error reading file: {e}")
+        st.error(f"❌ Error reading worksheet: {e}")
 else:
-    st.info("⬆️ Please upload an Excel file to begin.")
+    st.info("Upload the Excel file to get started.")
