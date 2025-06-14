@@ -10,6 +10,7 @@ uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", 
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        df.columns = df.columns.str.strip()  # Remove leading/trailing whitespace
 
         st.success("✅ File uploaded and 'sorted' worksheet loaded successfully.")
         st.dataframe(df)
