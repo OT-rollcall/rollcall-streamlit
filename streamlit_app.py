@@ -10,42 +10,42 @@ uploaded_file = st.file_uploader("📤 Upload today's roll call Excel file (.xls
 if uploaded_file:
     try:
         # Load raw data
-df_raw = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
-st.success("✅ File uploaded and 'sorted' worksheet loaded successfully.")
-st.subheader("📄 Raw column headers detected:")
-st.write(list(df_raw.columns))
-
-# Match required columns using flexible keywords
-col_map = {}
-for col in df_raw.columns:
-    name = col.strip().lower()
-    if "ot" in name and "name" in name:
-        col_map["Name"] = col
-    elif "present" in name and "absent" in name:
-        col_map["Present"] = col
-    elif "p1" in name and "total" in name:
-        col_map["P1 Total"] = col
-    elif "p2" in name and "total" in name:
-        col_map["P2 Total"] = col
-    elif "p3" in name and "total" in name:
-        col_map["P3 Total"] = col
-    elif "can help" in name:
-        col_map["Can Help"] = col
-    elif "need help" in name:
-        col_map["Need Help"] = col
-    elif "notes" in name:
-        col_map["Notes"] = col
-
-# Ensure all required columns are present
-required = ["Name", "Present", "P1 Total", "P2 Total", "P3 Total", "Can Help", "Need Help"]
-missing = [r for r in required if r not in col_map]
-if missing:
-    st.error(f"❌ Missing required columns: {missing}")
-    st.stop()
-
-# Subset and rename
-df = df_raw[[col_map[c] for c in required]].rename(columns={v: k for k, v in col_map.items()})
-st.dataframe(df)
+        df_raw = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        st.success("✅ File uploaded and 'sorted' worksheet loaded successfully.")
+        st.subheader("📄 Raw column headers detected:")
+        st.write(list(df_raw.columns))
+        
+        # Match required columns using flexible keywords
+        col_map = {}
+        for col in df_raw.columns:
+            name = col.strip().lower()
+            if "ot" in name and "name" in name:
+                col_map["Name"] = col
+            elif "present" in name and "absent" in name:
+                col_map["Present"] = col
+            elif "p1" in name and "total" in name:
+                col_map["P1 Total"] = col
+            elif "p2" in name and "total" in name:
+                col_map["P2 Total"] = col
+            elif "p3" in name and "total" in name:
+                col_map["P3 Total"] = col
+            elif "can help" in name:
+                col_map["Can Help"] = col
+            elif "need help" in name:
+                col_map["Need Help"] = col
+            elif "notes" in name:
+                col_map["Notes"] = col
+        
+        # Ensure all required columns are present
+        required = ["Name", "Present", "P1 Total", "P2 Total", "P3 Total", "Can Help", "Need Help"]
+        missing = [r for r in required if r not in col_map]
+        if missing:
+            st.error(f"❌ Missing required columns: {missing}")
+            st.stop()
+        
+        # Subset and rename
+        df = df_raw[[col_map[c] for c in required]].rename(columns={v: k for k, v in col_map.items()})
+        st.dataframe(df)
 
         # Case assignment logic
         assignment_log = []
