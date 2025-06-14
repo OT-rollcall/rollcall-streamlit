@@ -44,32 +44,4 @@ if uploaded_file:
         # Total case count
         df["Total Cases"] = df["P1 Total"] + df["P2 Total"] + df["P3 Total"]
 
-        # Separate helpers and those needing help
-        helpers = df[(df["Present"].str.lower() == "yes") & (df["Can Help"] > 0)].copy()
-        needs_help = df[(df["Need Help"] > 0) | (df["Present"].str.lower() == "no")].copy()
-
-        st.success("✅ File loaded. Case redistribution will now be displayed.")
-        st.dataframe(df)
-
-        # Case assignment logic
-        assignment_log = []
-
-        # Calculate total cases needing reassignment
-        total_cases_to_assign = needs_help["Total Cases"].sum()
-
-        for _, helper in helpers.iterrows():
-            max_assignable = min(helper["Can Help"], 9 - helper["Total Cases"])
-            if max_assignable <= 0:
-                continue
-
-            assigned = 0
-
-            for i, (idx, needy) in enumerate(needs_help.iterrows()):
-                if needy["Total Cases"] <= 0:
-                    continue
-
-                assign_count = min(max_assignable - assigned, needy["Total Cases"])
-                if assign_count <= 0:
-                    break
-
-                needs
+        # Separate hel
