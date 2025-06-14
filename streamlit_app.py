@@ -10,6 +10,9 @@ if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
         df.columns = df.columns.str.strip().str.replace("\n", " ").str.replace(r"\s+", " ", regex=True)
+        st.subheader("🧪 Raw Column Names")
+        st.write(df.columns.tolist())
+
 
         # Optional: show raw column names for debug
         st.write("Detected columns:", list(df.columns))
