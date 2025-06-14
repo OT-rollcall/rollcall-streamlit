@@ -51,7 +51,7 @@ if uploaded_file:
         assignment_log = []
 
         # Calculate total cases needing reassignment
-        total_cases_to_assign = needs_help["Total Cases"].sum()
+        total_cases_to_assign = need_help["Total Cases"].sum()
 
         for _, helper in helpers.iterrows():
             max_assignable = min(helper["Can Help"], 9 - helper["Total Cases"])
@@ -60,7 +60,7 @@ if uploaded_file:
 
             assigned = 0
 
-            for i, (idx, needy) in enumerate(needs_help.iterrows()):
+            for i, (idx, needy) in enumerate(need_help.iterrows()):
                 if needy["Total Cases"] <= 0:
                     continue
 
@@ -68,7 +68,7 @@ if uploaded_file:
                 if assign_count <= 0:
                     break
 
-                needs_help.at[idx, "Total Cases"] -= assign_count
+                need_help.at[idx, "Total Cases"] -= assign_count
                 assigned += assign_count
 
                 assignment_log.append(
@@ -78,7 +78,7 @@ if uploaded_file:
             if assigned > 0:
                 st.write(f"✅ {helper['Name']} assigned {assigned} case(s) to assist others.")
 
-        unassigned = needs_help[needs_help["Total Cases"] > 0]
+        unassigned = need_help[need_help["Total Cases"] > 0]
         if not assignment_log:
             st.info("No case redistribution was needed.")
         else:
