@@ -1,86 +1,83 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Roll Call Assistant", layout="wide")
-st.title("Roll Call Assistant (Prototype with Assignment Logic)")
+st.set_page_config(page_title="Roll Call App", layout="wide")
+st.title("Roll Call Assistant (Prototype)")
 
-uploaded_file = st.file_uploader("📁 Upload today's Excel file (worksheet = 'sorted')", type=["xlsx"])
+# Upload Excel
+uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        df.columns = df.columns.str.strip()
 
-        st.success("✅ File uploaded successfully!")
+        st.success("✅ File uploaded and 'sorted' worksheet loaded.")
         st.dataframe(df)
 
-        # Extract relevant fields
-        name_col = "OT's Name"
-        present_col = "Present / Absent "
-        ms_col = "Must See / P1 (Total)"
-        can_help_col = "Can Help (indicate number of cases/timings under \"Others\")"
-        need_help_col = "Need Help (indicate number of cases under \"Others\")"
-        ward_col = "Ward"
+        # Parse availability and help status
+        df['Name'] = df['Name'].str.strip()
+        present_status = df['Present / Absent'].str.strip().str.lower()
+        can_help = df['Can Help'].fillna(0)
+        need_help = df['Need Help'].fillna(0)
 
-        df = df[df[present_col].str.lower() == 'yes'].copy()
-        df[name_col] = df[name_col].fillna("Unknown")
+        # Step 1: Identify all people who need help
+        need_help_therapists = df[df['Need Help'] > 0]
 
-        # Clean and convert numbers
-        df[ms_col] = pd.to_numeric(df[ms_col], errors='coerce').fillna(0).astype(int)
-        df[can_help_col] = pd.to_numeric(df[can_help_col], errors='coerce').fillna(0).astype(int)
-        df[need_help_col] = pd.to_numeric(df[need_help_col], errors='coerce').fillna(0).astype(int)
+        # Step 2: Identify all helpers (can help > 0 and either present, or absent but 'caseload tight')
+        helper_pool = df[
+            (can_help > 0) & (present_status == 'yes')
+        ].copy()
 
-        # Calculate total initial caseload
-        df['Total Load'] = df[ms_col]
+        # Step 3: Redistribute from those who are absent OR who explicitly marked need help
+        redistribute_from = df[
+            (present_status == 'no') | (df['Need Help'] > 0)
+        ].copy()
 
-        # --- Rule: Distribute help fairly (max 9 cases) ---
+        # Step 4: Handle special case: notes say "away the rest of the week"
+        redistribute_from['Force_P2'] = redistribute_from['Notes'].fillna('').str.contains("away the rest of the week", case=False)
+
+        # Summary: track who is helping whom
         assignments = []
 
-        for idx, row in df.iterrows():
-            therapist = row[name_col]
-            can_give = row[need_help_col]
-            can_take = row[can_help_col]
-            total_load = row['Total Load']
-            ward = row[ward_col]
+        for idx, row in redistribute_from.iterrows():
+            giver = row['Name']
+            cases_to_give = int(row['Need Help']) if row['Need Help'] > 0 else 3  # default 3 for absent
+            if row['Force_P2']:
+                cases_to_give = max(cases_to_give, 2)  # Push at least 2 cases if away whole week
 
-            if can_give > 0:
-                # Find helpers in same ward first
-                helpers = df[
-                    (df[name_col] != therapist) &
-                    (df[can_help_col] > 0) &
-                    (df['Total Load'] < 9)
-                ].copy()
+            while cases_to_give > 0 and not helper_pool.empty:
+                # Pick helper with fewest already assigned
+                helper_pool = helper_pool.sort_values(by='Can Help', ascending=False)
+                for h_idx, h_row in helper_pool.iterrows():
+                    helper = h_row['Name']
+                    help_capacity = int(h_row['Can Help'])
 
-                # Sort helpers by same ward > lowest load
-                helpers['same_ward'] = helpers[ward_col] == ward
-                helpers = helpers.sort_values(by=['same_ward', 'Total Load'], ascending=[False, True])
+                    if help_capacity <= 0:
+                        continue
 
-                to_assign = can_give
-                for _, helper_row in helpers.iterrows():
-                    helper = helper_row[name_col]
-                    helper_load = helper_row['Total Load']
-                    helper_capacity = min(9 - helper_load, helper_row[can_help_col], to_assign)
+                    assigned_now = min(help_capacity, cases_to_give)
+                    cases_to_give -= assigned_now
 
-                    if helper_capacity > 0:
-                        assignments.append(f"➡️ **{helper}** helps **{therapist}** with **{helper_capacity} case(s)**")
-                        df.loc[df[name_col] == helper, 'Total Load'] += helper_capacity
-                        df.loc[df[name_col] == helper, can_help_col] -= helper_capacity
-                        to_assign -= helper_capacity
+                    # Update Can Help pool
+                    helper_pool.at[h_idx, 'Can Help'] -= assigned_now
 
-                        if to_assign <= 0:
-                            break
+                    assignments.append(f"🟢 {helper} helps {giver} with {assigned_now} case(s)")
 
-        st.markdown("---")
-        st.subheader("📊 Summary: Help Distribution")
+                    if cases_to_give <= 0:
+                        break
+
+        st.markdown("### 📋 Assignment Summary")
         if assignments:
-            for line in assignments:
-                st.markdown(line)
+            for a in assignments:
+                st.write(a)
         else:
-            st.info("No case redistribution needed today.")
+            st.success("✅ No redistribution needed based on current inputs.")
 
         st.markdown("---")
-        st.caption("Prototype last updated: June 2025")
+        st.info("Let me know if you'd like this summary to be downloadable as Excel or shown by ward/session.")
 
     except Exception as e:
-        st.error(f"❌ Error reading worksheet: {e}")
+        st.error(f"Error reading file: {e}")
 else:
-    st.info("Upload the Excel file to get started.")
+    st.info("Please upload a file to begin.")
