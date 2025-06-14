@@ -1,83 +1,75 @@
 import streamlit as st
 import pandas as pd
+import re
 
 st.set_page_config(page_title="Roll Call App", layout="wide")
 st.title("Roll Call Assistant (Prototype)")
 
-# Upload Excel
-uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("📤 Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
-        df.columns = df.columns.str.strip()
 
-        st.success("✅ File uploaded and 'sorted' worksheet loaded.")
+        # Standardize column names
+        required_columns = [
+            "OT's Name", "Ward", "Present / Absent", "Must See / P1 (Total)", "Must See / P1 (TA Assist)",
+            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)", "P2 (TA Assist)", "P3 (Total)", "P3 (TA Assist)",
+            "TA-led cases (To indicate P level and TransD cases)",
+            "Can Help (indicate number of cases/timings under \"Others\")",
+            "Need Help (indicate number of cases under \"Others\")",
+            "TA Slot - 1st slot (8.45 - 10am) | 2nd slot (10.15 - 11.30am) | 3rd slot (11.45 - 1pm) | 4th slot (2 - 3.15pm) | 5th slot (3.30 - 5pm)",
+            "Notes"
+        ]
+
+        df = df[required_columns]
+        df.columns = [col.strip() for col in df.columns]
+
+        # Rename for easier access
+        df = df.rename(columns={
+            "OT's Name": "Name",
+            "Present / Absent": "Present",
+            "Can Help (indicate number of cases/timings under \"Others\")": "Can Help",
+            "Need Help (indicate number of cases under \"Others\")": "Need Help",
+            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "P2 Total",
+            "Must See / P1 (Total)": "P1 Total",
+            "P3 (Total)": "P3 Total",
+        })
+
+        # Clean and convert relevant columns
+        for col in ["P1 Total", "P2 Total", "P3 Total", "Can Help", "Need Help"]:
+            df[col] = df[col].fillna(0)
+            df[col] = df[col].astype(str).str.extract(r'(\d+)').fillna(0).astype(int)
+
+        # Total case count
+        df["Total Cases"] = df["P1 Total"] + df["P2 Total"] + df["P3 Total"]
+
+        # Separate helpers and those needing help
+        helpers = df[(df["Present"].str.lower() == "yes") & (df["Can Help"] > 0)].copy()
+        needs_help = df[(df["Need Help"] > 0) | (df["Present"].str.lower() == "no")].copy()
+
+        st.success("✅ File loaded. Case redistribution will now be displayed.")
         st.dataframe(df)
 
-        # Parse availability and help status
-        df['Name'] = df['Name'].str.strip()
-        present_status = df['Present / Absent'].str.strip().str.lower()
-        can_help = df['Can Help'].fillna(0)
-        need_help = df['Need Help'].fillna(0)
+        # Case assignment logic
+        assignment_log = []
 
-        # Step 1: Identify all people who need help
-        need_help_therapists = df[df['Need Help'] > 0]
+        # Calculate total cases needing reassignment
+        total_cases_to_assign = needs_help["Total Cases"].sum()
 
-        # Step 2: Identify all helpers (can help > 0 and either present, or absent but 'caseload tight')
-        helper_pool = df[
-            (can_help > 0) & (present_status == 'yes')
-        ].copy()
+        for _, helper in helpers.iterrows():
+            max_assignable = min(helper["Can Help"], 9 - helper["Total Cases"])
+            if max_assignable <= 0:
+                continue
 
-        # Step 3: Redistribute from those who are absent OR who explicitly marked need help
-        redistribute_from = df[
-            (present_status == 'no') | (df['Need Help'] > 0)
-        ].copy()
+            assigned = 0
 
-        # Step 4: Handle special case: notes say "away the rest of the week"
-        redistribute_from['Force_P2'] = redistribute_from['Notes'].fillna('').str.contains("away the rest of the week", case=False)
+            for i, (idx, needy) in enumerate(needs_help.iterrows()):
+                if needy["Total Cases"] <= 0:
+                    continue
 
-        # Summary: track who is helping whom
-        assignments = []
+                assign_count = min(max_assignable - assigned, needy["Total Cases"])
+                if assign_count <= 0:
+                    break
 
-        for idx, row in redistribute_from.iterrows():
-            giver = row['Name']
-            cases_to_give = int(row['Need Help']) if row['Need Help'] > 0 else 3  # default 3 for absent
-            if row['Force_P2']:
-                cases_to_give = max(cases_to_give, 2)  # Push at least 2 cases if away whole week
-
-            while cases_to_give > 0 and not helper_pool.empty:
-                # Pick helper with fewest already assigned
-                helper_pool = helper_pool.sort_values(by='Can Help', ascending=False)
-                for h_idx, h_row in helper_pool.iterrows():
-                    helper = h_row['Name']
-                    help_capacity = int(h_row['Can Help'])
-
-                    if help_capacity <= 0:
-                        continue
-
-                    assigned_now = min(help_capacity, cases_to_give)
-                    cases_to_give -= assigned_now
-
-                    # Update Can Help pool
-                    helper_pool.at[h_idx, 'Can Help'] -= assigned_now
-
-                    assignments.append(f"🟢 {helper} helps {giver} with {assigned_now} case(s)")
-
-                    if cases_to_give <= 0:
-                        break
-
-        st.markdown("### 📋 Assignment Summary")
-        if assignments:
-            for a in assignments:
-                st.write(a)
-        else:
-            st.success("✅ No redistribution needed based on current inputs.")
-
-        st.markdown("---")
-        st.info("Let me know if you'd like this summary to be downloadable as Excel or shown by ward/session.")
-
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-else:
-    st.info("Please upload a file to begin.")
+                needs
