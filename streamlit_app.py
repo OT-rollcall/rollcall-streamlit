@@ -21,7 +21,7 @@ if uploaded_file:
             "Present / Absent": "present",
             "Must See / P1 (Total)": "p1_total",
             "Must See / P1 (TA Assist)": "p1_ta",
-            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "p2_total_raw",
+            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "p2_total",
             "P2 (TA Assist)": "p2_ta",
             "P3 (Total)": "p3_total",
             "P3 (TA Assist)": "p3_ta",
@@ -54,8 +54,8 @@ if uploaded_file:
             match = re.match(r'(\d+)', str(val))
             return int(match.group(1)) if match else 0
 
-        df["p2_1"] = df["p2_total_raw"].apply(extract_p2_1)
-        df["p2_total"] = df["p2_total_raw"].apply(extract_p2_total)
+        df["p2_1"] = df["p2_total"].apply(extract_p2_1)
+        df["p2_total"] = df["p2_total"].apply(extract_p2_total)
         df["p2_2"] = df["p2_total"] - df["p2_1"]
 
         st.success("✅ File uploaded and 'Sorted' worksheet loaded successfully.")
