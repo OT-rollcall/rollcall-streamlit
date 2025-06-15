@@ -10,7 +10,7 @@ uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", 
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name="Sorted", engine="openpyxl")
+        df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
 
         # Standardize column names
         df.columns = df.columns.str.strip()
