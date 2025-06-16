@@ -84,55 +84,53 @@ if uploaded_file:
 
         redistributed_cases = []
 
-        # Prioritize helpers
-        helpers = present[present["can_help"] > 0].copy()
-        nonhelpers = present[present["can_help"] == 0].copy()
-        helpers["assigned"] = 0
-        nonhelpers["assigned"] = 0
+        # Track case loads and assignments
+        present["assigned"] = 0
+        present["total_cases"] = present["p1"] + present["p2_1"] + present["p2_2"] + present["p3"]
 
-        def assign_cases(num_cases, source_name, priority_label):
-            nonlocal helpers, nonhelpers, redistributed_cases
+        def assign_cases(present_df, num_cases, source_name, case_type):
             remaining = num_cases
 
-            for _, row in helpers.iterrows():
-                available = 9 - (row["p1"] + row["p2_1"] + row["p2_2"] + row["p3"] + row["assigned"])
+            # First: assign to helpers
+            for i, row in present_df[present_df["can_help"] > 0].iterrows():
+                available = 9 - (row["total_cases"] + row["assigned"])
                 to_assign = min(available, remaining)
                 if to_assign > 0:
-                    helpers.loc[helpers[name_col] == row[name_col], "assigned"] += to_assign
+                    present.at[i, "assigned"] += to_assign
                     redistributed_cases.append({
                         "to": row[name_col],
                         "from": source_name,
                         "cases": to_assign,
-                        "type": priority_label
+                        "type": case_type
                     })
                     remaining -= to_assign
                 if remaining <= 0:
-                    break
+                    return
 
-            # If still remaining, go to non-helpers
-            if remaining > 0:
-                for _, row in nonhelpers.iterrows():
-                    available = 9 - (row["p1"] + row["p2_1"] + row["p2_2"] + row["p3"] + row["assigned"])
-                    to_assign = min(available, remaining)
-                    if to_assign > 0:
-                        nonhelpers.loc[nonhelpers[name_col] == row[name_col], "assigned"] += to_assign
-                        redistributed_cases.append({
-                            "to": row[name_col],
-                            "from": source_name,
-                            "cases": to_assign,
-                            "type": priority_label + " (non-helper)"
-                        })
-                        remaining -= to_assign
-                    if remaining <= 0:
-                        break
+            # Then: assign to non-helpers if still needed
+            for i, row in present_df[present_df["can_help"] == 0].iterrows():
+                available = 9 - (row["total_cases"] + row["assigned"])
+                to_assign = min(available, remaining)
+                if to_assign > 0:
+                    present.at[i, "assigned"] += to_assign
+                    redistributed_cases.append({
+                        "to": row[name_col],
+                        "from": source_name,
+                        "cases": to_assign,
+                        "type": f"{case_type} (non-helper)"
+                    })
+                    remaining -= to_assign
+                if remaining <= 0:
+                    return
 
         for _, row in absent.iterrows():
             if row["p1"] > 0:
-                assign_cases(row["p1"], row[name_col], "P1 (Must See)")
-            if row["p2_plan"] == "distribute" and row["p2_1"] > 0:
-                assign_cases(row["p2_1"], row[name_col], "P2.1")
-            if row["p2_plan"] == "distribute" and row["p2_2"] > 0:
-                assign_cases(row["p2_2"], row[name_col], "P2.2")
+                assign_cases(present, row["p1"], row[name_col], "P1 (Must See)")
+            if row["p2_plan"] == "distribute":
+                if row["p2_1"] > 0:
+                    assign_cases(present, row["p2_1"], row[name_col], "P2.1")
+                if row["p2_2"] > 0:
+                    assign_cases(present, row["p2_2"], row[name_col], "P2.2")
 
         if redistributed_cases:
             df_out = pd.DataFrame(redistributed_cases)
