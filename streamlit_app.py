@@ -1,144 +1,98 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import re
 
 st.set_page_config(page_title="Roll Call App", layout="wide")
 st.title("Roll Call Assistant (Prototype)")
 
+# --- Upload Excel File ---
 uploaded_file = st.file_uploader("Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
         df_raw = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
-        df = df_raw.copy()
 
-        # Standardize column names
-        df.columns = df.columns.str.strip()
-        colmap = {col: col.lower().replace("\n", " ").strip() for col in df.columns}
-        df.rename(columns=colmap, inplace=True)
+        # --- Normalize column names ---
+        df_raw.columns = [col.strip().split("\n")[0] for col in df_raw.columns]
 
-        # Extract needed columns with matching
-        def find_col(keywords):
-            for col in df.columns:
-                if all(k.lower() in col for k in keywords):
-                    return col
-            return None
+        # Rename key columns for ease
+        df = df_raw.rename(columns={
+            "OT's Name": "Name",
+            "Present / Absent": "Present",
+            "Must See / P1 (Total)": "P1",
+            "Need Help (indicate number of cases under \"Others\")": "Need Help",
+            "Can Help (indicate number of cases/timings under \"Others\")": "Can Help",
+            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "P2",
+            "Notes": "Notes"
+        })
 
-        name_col = find_col(["ot", "name"])
-        ward_col = find_col(["ward"])
-        present_col = find_col(["present", "absent"])
-        p1_col = find_col(["must", "see"])
-        p2_raw_col = find_col(["p2", "total"])
-        p3_col = find_col(["p3", "total"])
-        need_help_col = find_col(["need", "help"])
-        can_help_col = find_col(["can", "help"])
-        notes_col = find_col(["notes"])
+        # Ensure missing cols are filled
+        for col in ["P1", "Need Help", "Can Help", "P2", "Notes"]:
+            if col not in df.columns:
+                df[col] = 0
 
-        required_cols = [name_col, ward_col, present_col, p1_col, p2_raw_col, p3_col, need_help_col, can_help_col, notes_col]
-        if not all(required_cols):
-            st.error("❌ Could not find all required columns in the uploaded file.")
-            st.stop()
+        # Clean data
+        df["P1"] = pd.to_numeric(df["P1"], errors="coerce").fillna(0).astype(int)
+        df["Need Help"] = pd.to_numeric(df["Need Help"], errors="coerce").fillna(0).astype(int)
+        df["Can Help"] = pd.to_numeric(df["Can Help"], errors="coerce").fillna(0).astype(int)
+        df["Present"] = df["Present"].astype(str).str.strip().str.lower()
+        df["Notes"] = df["Notes"].astype(str).fillna("")
 
-        df["present"] = df[present_col].str.strip().str.lower() == "yes"
-        df["p1"] = pd.to_numeric(df[p1_col], errors="coerce").fillna(0).astype(int)
+        st.success("✅ File uploaded and worksheet parsed successfully.")
+        st.dataframe(df)
 
-        # Parse P2/1 from "P2 (Total)" e.g. "10 (3 P2/1)"
-        def extract_p2_counts(val):
-            if pd.isna(val):
-                return (0, 0)
-            if isinstance(val, str):
-                match = re.search(r"(\d+)\s*\(\s*(\d+)\s*P2/1", val)
-                if match:
-                    return (int(match.group(1)), int(match.group(2)))
-                digits = re.findall(r"\d+", val)
-                return (int(digits[0]), 0) if digits else (0, 0)
-            return (int(val), 0)
+        st.markdown("---")
+        st.subheader("📊 Must See (P1) Case Redistribution")
 
-        df[["p2_total", "p2_1"]] = df[p2_raw_col].apply(extract_p2_counts).apply(pd.Series)
-        df["p2_2"] = df["p2_total"] - df["p2_1"]
+        # Identify absent staff with P1s
+        absent = df[df["Present"] == "no"]
+        absent_with_p1 = absent[absent["P1"] > 0]
 
-        df["p3"] = pd.to_numeric(df[p3_col], errors="coerce").fillna(0).astype(int)
-
-        df["can_help"] = pd.to_numeric(df[can_help_col], errors="coerce").fillna(0).astype(int)
-        df["need_help"] = pd.to_numeric(df[need_help_col], errors="coerce").fillna(0).astype(int)
-        df["notes"] = df[notes_col].fillna("").astype(str)
-
-        today = datetime.datetime.today()
-        weekday = today.strftime("%A")
-
-        def get_p2_schedule(row):
-            if "away" in row["notes"].lower() and "rest of week" in row["notes"].lower():
-                return "distribute"
-            return "keep"
-
-        df["p2_plan"] = df.apply(get_p2_schedule, axis=1)
-
-        st.success("✅ File loaded and parsed correctly.")
-
-        # --- Redistribution Logic ---
-        st.subheader("📊 Intelligent Case Assignment")
-
-        absent = df[~df["present"]].copy()
-        present = df[df["present"]].copy()
-
-        redistributed_cases = []
-
-        # Track case loads and assignments
-        present["assigned"] = 0
-        present["total_cases"] = present["p1"] + present["p2_1"] + present["p2_2"] + present["p3"]
-
-        def assign_cases(present_df, num_cases, source_name, case_type):
-            remaining = num_cases
-
-            # First: assign to helpers
-            for i, row in present_df[present_df["can_help"] > 0].iterrows():
-                available = 9 - (row["total_cases"] + row["assigned"])
-                to_assign = min(available, remaining)
-                if to_assign > 0:
-                    present.at[i, "assigned"] += to_assign
-                    redistributed_cases.append({
-                        "to": row[name_col],
-                        "from": source_name,
-                        "cases": to_assign,
-                        "type": case_type
-                    })
-                    remaining -= to_assign
-                if remaining <= 0:
-                    return
-
-            # Then: assign to non-helpers if still needed
-            for i, row in present_df[present_df["can_help"] == 0].iterrows():
-                available = 9 - (row["total_cases"] + row["assigned"])
-                to_assign = min(available, remaining)
-                if to_assign > 0:
-                    present.at[i, "assigned"] += to_assign
-                    redistributed_cases.append({
-                        "to": row[name_col],
-                        "from": source_name,
-                        "cases": to_assign,
-                        "type": f"{case_type} (non-helper)"
-                    })
-                    remaining -= to_assign
-                if remaining <= 0:
-                    return
-
-        for _, row in absent.iterrows():
-            if row["p1"] > 0:
-                assign_cases(present, row["p1"], row[name_col], "P1 (Must See)")
-            if row["p2_plan"] == "distribute":
-                if row["p2_1"] > 0:
-                    assign_cases(present, row["p2_1"], row[name_col], "P2.1")
-                if row["p2_2"] > 0:
-                    assign_cases(present, row["p2_2"], row[name_col], "P2.2")
-
-        if redistributed_cases:
-            df_out = pd.DataFrame(redistributed_cases)
-            st.dataframe(df_out)
+        if absent_with_p1.empty:
+            st.info("✅ No Must See (P1) cases need redistribution today.")
         else:
-            st.success("✅ No redistribution needed today.")
+            st.warning("⚠️ Redistributing Must See (P1) cases from absent staff...")
+
+            total_to_redistribute = absent_with_p1["P1"].sum()
+
+            # Identify potential helpers
+            present = df[df["Present"] == "yes"].copy()
+            helpers = present[present["Can Help"] > 0].copy()
+            nonhelpers = present[present["Can Help"] == 0].copy()
+
+            # Start with helpers, assign fairly up to max 9 total cases
+            assignment = {name: 0 for name in present["Name"]}
+            unassigned = total_to_redistribute
+
+            def assign_cases(group, unassigned):
+                for _, row in group.iterrows():
+                    name = row["Name"]
+                    current_load = df.loc[df["Name"] == name, "P1"].values[0] + assignment[name]
+                    available_slots = max(0, 9 - current_load)
+                    give = min(available_slots, unassigned)
+                    assignment[name] += give
+                    unassigned -= give
+                    if unassigned <= 0:
+                        break
+                return unassigned
+
+            unassigned = assign_cases(helpers, unassigned)
+            if unassigned > 0:
+                unassigned = assign_cases(nonhelpers, unassigned)
+
+            st.markdown(f"🔁 Total Must See (P1) cases needing redistribution: **{total_to_redistribute}**")
+            st.markdown(f"🧠 Cases distributed across available staff with max 9-case load limit:")
+
+            assigned_df = pd.DataFrame([
+                {"Name": name, "Assigned P1s": count}
+                for name, count in assignment.items() if count > 0
+            ])
+            st.dataframe(assigned_df)
+
+            if unassigned > 0:
+                st.error(f"❗ {unassigned} cases could not be redistributed due to all staff at capacity.")
 
     except Exception as e:
         st.error(f"⚠️ Error reading file: {e}")
+
 else:
     st.info("Please upload an Excel file to begin.")
