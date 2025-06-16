@@ -5,89 +5,92 @@ import re
 st.set_page_config(page_title="Roll Call Assistant", layout="wide")
 st.title("Roll Call Assistant (Prototype)")
 
-# --- Upload Excel File ---
 uploaded_file = st.file_uploader("📄 Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Load Excel sheet
-        df = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        df_raw = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
+        df_raw.columns = df_raw.columns.str.replace(r"\s+", " ", regex=True).str.strip()
 
-        # Clean column names
-        df.columns = df.columns.str.replace(r"\s+", " ", regex=True).str.strip()
-        st.write("📌 Column names detected in uploaded file:")
-        st.write(df.columns.tolist())  # DEBUG output
+        # Show detected columns for debugging
+        st.subheader("🔍 Detected Columns:")
+        st.write(df_raw.columns.tolist())
 
-        # Rename key columns to shorter internal names
-        df = df.rename(columns={
-            "OT's Name": "name",
-            "Ward": "ward",
-            "Present / Absent": "present",
-            "Must See / P1 (Total)": "p1",
-            "Must See / P1 (TA Assist)": "p1_ta",
-            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "p2_raw",
-            "P2 (TA Assist)": "p2_ta",
-            "P3 (Total)": "p3",
-            "P3 (TA Assist)": "p3_ta",
-            "TA-led cases (To indicate P level and TransD cases)": "ta_led",
-            "Can Help (indicate number of cases/timings under \"Others\")": "can_help",
-            "Need Help (indicate number of cases under \"Others\")": "need_help",
-            "TA Slot - 1st slot (8.45 - 10am) | 2nd slot (10.15 - 11.30am) | 3rd slot (11.45 - 1pm) | 4th slot (2 - 3.15pm) | 5th slot (3.30 - 5pm)": "ta_slot",
-            "Notes": "notes"
-        })
+        # Helper function: Find column by keyword
+        def find_col(keyword):
+            for col in df_raw.columns:
+                if keyword.lower() in col.lower():
+                    return col
+            return None
+
+        col_map = {
+            "name": find_col("OT's Name"),
+            "ward": find_col("ward"),
+            "present": find_col("Present / Absent"),
+            "p1": find_col("Must See / P1 (Total)"),
+            "p1_ta": find_col("Must See / P1 (TA Assist)"),
+            "p2_raw": find_col("P2 (Total)"),
+            "p2_ta": find_col("P2 (TA Assist)"),
+            "p3": find_col("P3 (Total)"),
+            "p3_ta": find_col("P3 (TA Assist)"),
+            "ta_led": find_col("TA-led"),
+            "can_help": find_col("Can Help"),
+            "need_help": find_col("Need Help"),
+            "ta_slot": find_col("TA Slot"),
+            "notes": find_col("Notes")
+        }
+
+        # Check if any essential column is missing
+        missing = [k for k, v in col_map.items() if v is None]
+        if missing:
+            st.error(f"❌ Missing required columns: {missing}")
+            st.stop()
+
+        # Rename columns to internal keys
+        df = df_raw.rename(columns={v: k for k, v in col_map.items()})
 
         # Normalize values
         df["present"] = df["present"].str.strip().str.lower()
         df["present"] = df["present"].map({"yes": True, "no": False})
-
         df["can_help"] = df["can_help"].fillna("").astype(str).str.strip()
         df["need_help"] = df["need_help"].fillna("").astype(str).str.strip()
         df["notes"] = df["notes"].fillna("").astype(str).str.lower()
 
-        # Extract P2 total and P2/1 values from "p2_raw"
-        def extract_p2_values(text):
+        # Extract P2 numbers from raw
+        def extract_p2(text):
             text = str(text)
             match = re.match(r"(\d+)\s*\((\d+)\s*P2/1\)", text)
             if match:
                 return int(match.group(1)), int(match.group(2))
-            else:
-                # Try to extract just a total if no bracketed P2/1
-                num = re.findall(r"\d+", text)
-                return (int(num[0]), 0) if num else (0, 0)
+            nums = re.findall(r"\d+", text)
+            return (int(nums[0]), 0) if nums else (0, 0)
 
-        df[["p2_total", "p2_1"]] = df["p2_raw"].apply(lambda x: pd.Series(extract_p2_values(x)))
+        df[["p2_total", "p2_1"]] = df["p2_raw"].apply(lambda x: pd.Series(extract_p2(x)))
 
-        st.success("✅ File processed successfully.")
+        st.success("✅ File loaded successfully")
         st.dataframe(df)
 
-        # --- Redistribute P1 cases if person is absent and has P1s ---
+        # Check for P1 redistribution
         st.markdown("### 🔄 Redistribution Suggestions")
-
         redistribution_needed = False
-        p1_redistribute = []
         for _, row in df.iterrows():
             if row["present"] is False and row["p1"] > 0:
+                st.markdown(f"- {row['name']} is absent and has **{row['p1']} Must See (P1)** case(s).")
                 redistribution_needed = True
-                p1_redistribute.append((row["name"], row["p1"]))
 
-        if p1_redistribute:
-            st.write("📌 Must See (P1) cases need redistribution from absent therapists:")
-            for name, count in p1_redistribute:
-                st.markdown(f"- {name}: {count} P1 case(s)")
-        else:
-            st.success("✅ No redistribution needed for Must See (P1) cases.")
+        if not redistribution_needed:
+            st.success("✅ No P1 redistribution needed.")
 
-        # --- Preview: Future logic ---
+        # Next steps placeholder
         st.markdown("---")
-        st.subheader("⚙️ Next: Intelligent Case Assignment Preview")
+        st.subheader("🚧 Intelligent Assignment Preview Coming Up")
+        st.markdown("Will include:")
         st.markdown("""
-        Coming up:
-        - Assign Must See (P1) from absent staff
-        - Fairly distribute P2.1 and P2.2, up to 9 total per person
-        - Honour 'Need Help' and 'Can Help' fields
-        - Minimise therapist movement between Main / Renci / NCID
-        - Account for notes like 'away rest of week'
-        - Block sessions for clinics, HVs, etc.
+        - P1, P2.1 and P2.2 fair case distribution (≤9 total per therapist)
+        - Honour 'Need Help' / 'Can Help'
+        - Respect Present / Absent
+        - Minimize building movement
+        - Schedule-aware (AM/PM/HV/Clinic blocking)
         """)
 
     except Exception as e:
