@@ -1,91 +1,97 @@
 import streamlit as st
 import pandas as pd
-import re
 
 st.set_page_config(page_title="Roll Call Assistant", layout="wide")
+
 st.title("Roll Call Assistant (Prototype)")
+st.write("Upload your Excel sheet and begin roll call logic here.")
 
-# --- Upload Excel File ---
-uploaded_file = st.file_uploader("📄 Upload today's roll call Excel file (.xlsx)", type=["xlsx"])
-
-def clean_headers(df):
-    cleaned_columns = {}
-    for col in df.columns:
-        clean_col = str(col).strip().replace('\n', ' ').replace('\r', '').replace('\u00a0', ' ')
-        cleaned_columns[col] = clean_col
-    df.rename(columns=cleaned_columns, inplace=True)
-    return df
+uploaded_file = st.file_uploader("Choose your Excel file", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Read and clean headers
-        df_raw = pd.read_excel(uploaded_file, sheet_name="sorted", engine="openpyxl")
-        df = clean_headers(df_raw)
+        df = pd.read_excel(uploaded_file, sheet_name="sorted")
 
-        st.success("✅ File uploaded and headers cleaned successfully.")
-        st.dataframe(df.head(20))
+        # Clean column names
+        df.columns = [str(col).replace("\n", " ").strip() for col in df.columns]
 
-        # --- Normalize key columns ---
-        df["Present"] = df["Present / Absent"].str.strip().str.lower() == "yes"
-        df["Can Help"] = df["Can Help (indicate number of cases/timings under \"Others\")"].fillna("0").astype(str)
-        df["Need Help"] = df["Need Help (indicate number of cases under \"Others\")"].fillna("0").astype(str)
+        # Rename long or multiline columns for consistency
+        df = df.rename(columns={
+            "P2 (Total) - to indicate number of P2/1 e.g. 10 (3 P2/1)": "P2_total_raw",
+            "Must See / P1 (Total)": "P1",
+            "Present / Absent": "Present",
+            "Can Help (indicate number of cases/timings under \"Others\")": "Can Help",
+            "Need Help (indicate number of cases under \"Others\")": "Need Help",
+            "TA Slot 1st slot (8.45 - 10am) | 2nd slot (10.15 - 11.30am) | 3rd slot (11.45 - 1pm) | 4th slot (2 - 3.15pm) | 5th slot (3.30 - 5pm)": "TA Slot"
+        })
 
-        df["Can Help Num"] = df["Can Help"].str.extract("(\d+)").fillna(0).astype(int)
-        df["Need Help Num"] = df["Need Help"].str.extract("(\d+)").fillna(0).astype(int)
+        # Check all required columns exist
+        required = ['OT\'s Name', 'P1', 'Present', 'Can Help', 'Need Help', 'Notes']
+        for col in required:
+            if col not in df.columns:
+                raise ValueError(f"Missing required column: {col}")
 
-        # --- Extract Must See / P1 ---
-        df["P1 Count"] = df["Must See / P1 (Total)"].fillna(0).astype(int)
+        df['P1'] = pd.to_numeric(df['P1'], errors='coerce').fillna(0).astype(int)
+        df['Present'] = df['Present'].astype(str).str.strip().str.lower()
+        df['Can Help Num'] = pd.to_numeric(df['Can Help'], errors='coerce').fillna(0).astype(int)
+        df['Need Help Num'] = pd.to_numeric(df['Need Help'], errors='coerce').fillna(0).astype(int)
+        df['Notes'] = df['Notes'].astype(str).fillna("")
 
-        # --- Intelligent Redistribution ---
-        st.markdown("### 🧠 Intelligent Case Redistribution")
+        # Identify who is absent
+        absent = df[df['Present'] == 'no']
+        present = df[df['Present'] == 'yes']
 
-        absent = df[~df["Present"] & (df["P1 Count"] > 0)]
-        present = df[df["Present"]]
+        total_p1_to_redistribute = absent['P1'].sum()
+        st.subheader(f"Total P1 cases needing redistribution: {total_p1_to_redistribute}")
 
-        total_cases_to_redistribute = absent["P1 Count"].sum()
-        st.info(f"📦 Total P1 cases needing redistribution: {total_cases_to_redistribute}")
-
-        if total_cases_to_redistribute == 0:
-            st.success("✅ No redistribution needed.")
+        if total_p1_to_redistribute == 0:
+            st.success("✅ No P1 cases need redistribution today.")
         else:
-            helpers = present[present["Can Help Num"] > 0].copy()
-            helpers["Assigned Cases"] = 0
-            available_helpers = helpers.index.tolist()
+            # Filter helpers who can help AND are present
+            helpers = present.copy()
+            helpers['Assigned Cases'] = 0
+
+            # Respect "Can Help = 0", override only if necessary
+            helpers['Is Mentor'] = helpers['Notes'].str.contains("mentor", case=False, na=False)
+            helpers['Strict Limit'] = helpers['Is Mentor'] | (helpers['Can Help Num'] == 0)
 
             assignments = []
+
             for _, row in absent.iterrows():
-                p1_cases = row["P1 Count"]
                 therapist = row["OT's Name"]
-                notes = row.get("Notes", "")
+                p1_cases = int(row["P1"])
+                st.write(f"Redistributing {p1_cases} P1 case(s) from {therapist}...")
 
-                while p1_cases > 0 and available_helpers:
-                    for idx in available_helpers:
-                        helper = helpers.loc[idx]
-                        name = helper["OT's Name"]
+                # Eligible helpers: those who are not at their max
+                eligible = helpers[helpers['Assigned Cases'] < helpers['Can Help Num']]
 
-                        if helper["Assigned Cases"] < helper["Can Help Num"]:
-                            helpers.at[idx, "Assigned Cases"] += 1
-                            p1_cases -= 1
-                            assignments.append({
-                                "From": therapist,
-                                "To": name,
-                                "Case Type": "P1",
-                                "Note": f"{therapist}'s redistributed P1"
-                            })
-                            if p1_cases == 0:
-                                break
+                assigned = 0
+                for idx, helper in eligible.iterrows():
+                    if p1_cases == 0:
+                        break
+
+                    if helper['Strict Limit'] and helper['Assigned Cases'] >= helper['Can Help Num']:
+                        continue
+
+                    helpers.at[idx, 'Assigned Cases'] += 1
+                    p1_cases -= 1
+                    assigned += 1
+                    assignments.append({
+                        "From": therapist,
+                        "To": helper["OT's Name"],
+                        "Case Type": "P1",
+                        "Note": f"{therapist}'s redistributed P1"
+                    })
 
                 if p1_cases > 0:
-                    st.warning(f"⚠️ Not enough helpers to fully redistribute P1s from {therapist}. {p1_cases} cases unassigned.")
+                    st.warning(f"⚠️ Not enough helpers to fully redistribute {therapist}'s P1s. {p1_cases} case(s) unassigned.")
 
-            result_df = pd.DataFrame(assignments)
-            st.subheader("📋 Redistribution Result")
-            if not result_df.empty:
-                st.dataframe(result_df)
+            if assignments:
+                st.success("✅ Redistribution complete.")
+                assignments_df = pd.DataFrame(assignments)
+                st.dataframe(assignments_df)
             else:
-                st.info("No redistribution assignments were made.")
+                st.info("ℹ️ No eligible helpers found for redistribution.")
 
     except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-else:
-    st.info("Upload an Excel file to begin.")
+        st.error(f"Error reading file: {e}")
